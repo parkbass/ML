@@ -1,76 +1,97 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.ensemble import RandomForestRegressor
+import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.inspection import PartialDependenceDisplay
-from fpdf import FPDF
-import io
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.inspection import partial_dependence
+import matplotlib.pyplot as plt
 
-# 제목
-st.title("확률분류 방식(Random Forest) 자료 분석 웹앱")
+# ----- 기본 세팅 -----
+st.set_page_config(page_title="랜덤포레스트 분석기", page_icon="🌳", layout="wide")
 
-# 파일 업로드
-uploaded_file = st.file_uploader("파일 업로드", type=["csv"])
+st.markdown("<h1 style='text-align: center; color: #4CAF50;'>확률분류 방식(Random Forest) 데이터 분석 웹앱</h1>", unsafe_allow_html=True)
+st.markdown("---")
 
-if uploaded_file:
-    # 데이터 로딩
-    df = pd.read_csv(uploaded_file)
-    st.success("파일이 업로드되었습니다!")
-    st.dataframe(df)
+# ----- 파일 업로드 -----
+uploaded_file = st.file_uploader("파일 업로드 (CSV 형식)", type=['csv'])
 
-    # 종속변수 선택
-    target = st.selectbox("종속변수(예측하고 싶은 목표 변수)를 선택하세요", df.columns)
+if uploaded_file is not None:
+    try:
+        # 데이터 불러오기
+        df = pd.read_csv(uploaded_file)
 
-    # 모델 학습
-    if target:
-        X = df.drop(columns=[target])
-        y = df[target]
+        st.success("✅ 파일 업로드 성공!")
+        st.write("**업로드된 데이터 미리보기:**")
+        st.dataframe(df.head())
 
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        # ----- 종속 변수 선택 -----
+        st.markdown("### 🎯 종속변수(예측하고 싶은 목표 변수)를 선택하세요")
+        target_column = st.selectbox("종속변수 선택", options=df.columns.tolist())
 
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
-        model.fit(X_train, y_train)
+        # ----- 모델링 -----
+        if target_column:
+            X = df.drop(columns=[target_column])
+            y = df[target_column]
 
-        # 성능 출력
-        score = model.score(X_test, y_test)
-        st.success(f"\ud3ec함 R^2(테스트 데이터 기준): {score:.3f}")
+            # 데이터 전처리: 숫자형만 사용
+            X = X.select_dtypes(include=[np.number])
+            y = pd.to_numeric(y, errors='coerce')
 
-        # Feature Importance 출력
-        st.subheader("\ud658상 \ubcc0수 중요도 (Feature Importance)")
-        importance_df = pd.DataFrame({
-            '변수': X.columns,
-            '중요도': model.feature_importances_
-        }).sort_values('중요도', ascending=False)
+            # 결측치 제거
+            valid_idx = y.notna()
+            X = X.loc[valid_idx]
+            y = y.loc[valid_idx]
 
-        st.dataframe(importance_df)
+            # 학습용/테스트용 데이터 분리
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # ✅ PDF 저장 버튼 추가
-        buffer = io.BytesIO()
+            # 모델 학습
+            model = RandomForestRegressor(n_estimators=100, random_state=42)
+            model.fit(X_train, y_train)
 
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        pdf.cell(0, 10, "변수 중요도 (Feature Importance)", ln=True, align='C')
+            # 모델 성능
+            score = model.score(X_test, y_test)
+            st.success(f"📈 모델의 R²(테스트 데이터 기준) : **{score:.3f}**")
 
-        pdf.ln(10)
-        for index, row in importance_df.iterrows():
-            pdf.cell(0, 10, f"{row['변수']}: {row['중요도']:.4f}", ln=True)
+            # ----- 변수 중요도 표시 -----
+            st.markdown("### 📝 변수 중요도 (Feature Importance)")
 
-        pdf.output(buffer)
+            importance_df = pd.DataFrame({
+                '변수': X.columns,
+                '중요도': model.feature_importances_
+            }).sort_values(by='중요도', ascending=False)
 
-        st.download_button(
-            label="📄 변수 중요도 결과를 PDF로 저장하기",
-            data=buffer.getvalue(),
-            file_name="feature_importance.pdf",
-            mime="application/pdf"
-        )
+            st.dataframe(importance_df)
 
-        # PDP (부분의존도 그래프)
-        st.subheader("\ubcc0수별 \ubd80분의여도 그래프 (PDP)")
-        try:
-            fig, ax = plt.subplots(figsize=(12, 8))
-            PartialDependenceDisplay.from_estimator(model, X_test, X.columns, ax=ax)
-            st.pyplot(fig)
-        except Exception as e:
-            st.error(f"PDP \uadf8래프 \uad6c현에 \ec5c5\uc73c\ub85c \ec7a5\uc0b0: {e}")
+            # ----- 부분 의존도 플롯 표시 -----
+            st.markdown("### 📊 변수별 부분 의존도 그래프 (PDP)")
+
+            selected_features = st.multiselect(
+                "PDP를 그리고 싶은 변수를 선택하세요",
+                options=X.columns.tolist(),
+                default=X.columns.tolist()[:3]
+            )
+
+            if selected_features:
+                fig, axes = plt.subplots(1, len(selected_features), figsize=(5 * len(selected_features), 4))
+
+                if len(selected_features) == 1:
+                    axes = [axes]
+
+                for idx, feature in enumerate(selected_features):
+                    pd_result = partial_dependence(model, X_test, [feature])
+                    grid_values = pd_result['features'][0]
+                    averages = pd_result['average'][0]
+
+                    axes[idx].plot(grid_values, averages, marker='o')
+                    axes[idx].set_xlabel(feature)
+                    axes[idx].set_ylabel('Partial Dependence')
+                    axes[idx].set_title(feature)
+
+                st.pyplot(fig)
+
+    except Exception as e:
+        st.error(f"❌ 오류 발생: {e}")
+
+else:
+    st.info("👈 왼쪽에서 CSV 파일을 업로드 해주세요!")
