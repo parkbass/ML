@@ -1,76 +1,84 @@
-# RF.py (최신 streamlit용 버전)
+# RF_app_v3.py
+# (CSV + XLSX + XLS 업로드 지원 / 최신 Streamlit 호환 버전)
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+from sklearn.metrics import (
+    r2_score, mean_absolute_error, mean_squared_error,
+    accuracy_score, f1_score, classification_report
+)
 from sklearn.inspection import PartialDependenceDisplay
+from sklearn.preprocessing import LabelEncoder
 
-# 1. 제목
-st.title("확률분류 방식(Random Forest) 자료 분석 웹앱")
+st.set_page_config(page_title="랜덤포레스트 예측/분류 웹앱", layout="wide")
+st.title("랜덤포레스트 기반 예측/분류 웹앱 (CSV + Excel 지원)")
 
-# 2. 파일 업로드
-uploaded_file = st.file_uploader("파일 업로드", type=['csv'])
+# ----------------- Sidebar -----------------
+st.sidebar.header("설정")
+test_size = st.sidebar.slider("테스트 비율", 0.1, 0.5, 0.2, 0.05)
+random_state = st.sidebar.number_input("Random State", value=42, step=1)
+n_estimators = st.sidebar.slider("n_estimators (트리 개수)", 50, 500, 200, 50)
+max_depth = st.sidebar.slider("max_depth (None=0)", 0, 50, 0, 1)
+max_depth = None if max_depth == 0 else max_depth
+pdp_topk = st.sidebar.slider("PDP 대상 변수 수(상위 중요도)", 1, 10, 3, 1)
 
-if uploaded_file:
-    try:
-        # 데이터 읽기
-        df = pd.read_csv(uploaded_file)
-        st.success(f"로드된 데이터형태: {df.shape}")
+# ----------------- File Upload -----------------
+uploaded_file = st.file_uploader("CSV 또는 Excel 파일 업로드", type=["csv", "xlsx", "xls"])
+if uploaded_file is None:
+    st.info("예: 헤더가 포함된 CSV, XLSX, XLS 파일을 업로드하세요.")
+    st.stop()
 
-        # 문자열 데이터가 있으면 삭제 또는 처리
-        df = df.replace(['#DIV/0!', 'NaN', 'nan'], np.nan)
-        df = df.dropna()
+# 파일 확장자 판별
+file_name = uploaded_file.name.lower()
+read_ok = False
+df = None
 
-        # 쉼표(,)가 들어간 숫자형 문자열이 있으면 변환
-        for col in df.columns:
-            if df[col].dtype == object:
-                try:
-                    df[col] = df[col].str.replace(",", "").astype(float)
-                except:
-                    pass
+try:
+    if file_name.endswith(".csv"):
+        # 여러 인코딩 시도
+        for enc in ["utf-8-sig", "utf-8", "cp949"]:
+            try:
+                df = pd.read_csv(uploaded_file, encoding=enc)
+                read_ok = True
+                break
+            except Exception:
+                continue
+    elif file_name.endswith((".xlsx", ".xls")):
+        df = pd.read_excel(uploaded_file)
+        read_ok = True
+except Exception as e:
+    st.error(f"파일 읽기 중 오류 발생: {e}")
+    st.stop()
 
-        # 종속변수 선택
-        target_col = st.selectbox("확장할 목표 변수를 선택하세요", df.columns)
+if not read_ok:
+    st.error("파일을 불러올 수 없습니다. (인코딩 또는 형식 문제 가능)")
+    st.stop()
 
-        if target_col:
-            X = df.drop(columns=[target_col])
-            y = df[target_col]
+st.success(f"로드된 데이터 형태: {df.shape}")
+st.dataframe(df.head())
 
-            # 학습/테스트 분리
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# 전처리
+df = df.replace(['#DIV/0!', 'NaN', 'nan', ''], np.nan)
 
-            # 모델 학습
-            model = RandomForestRegressor(n_estimators=100, random_state=42)
-            model.fit(X_train, y_train)
+# 쉼표가 있는 숫자형 문자열 변환
+for col in df.columns:
+    if df[col].dtype == object:
+        try:
+            df[col] = df[col].str.replace(",", "", regex=False)
+            df[col] = pd.to_numeric(df[col], errors="ignore")
+        except Exception:
+            pass
 
-            # R2 출력
-            r2 = model.score(X_test, y_test)
-            st.success(f"평가 결과 (테스트 데이터 R²): {r2:.3f}")
+# 타깃 선택
+target_col = st.selectbox("예측/분류할 목표 변수(타깃)을 선택하세요", df.columns)
+if target_col is None:
+    st.stop()
 
-            # 변수 중요도 출력
-            st.subheader("확장된 변수 중요도 (Feature Importance)")
-            feature_importance = pd.DataFrame({
-                '변수': X.columns,
-                '중요도': model.feature_importances_
-            }).sort_values(by='중요도', ascending=False)
-            st.dataframe(feature_importance)
-
-            # PDP 그래프
-            st.subheader("확장된 변수별 부분 의존도 (PDP) 그래프")
-            for feature in X.columns:
-                fig, ax = plt.subplots(figsize=(6, 4))  # 여기 크기 고정 (적당히 보기 좋은 크기)
-                display = PartialDependenceDisplay.from_estimator(
-                    model,
-                    X_test,
-                    features=[feature],
-                    ax=ax,
-                    kind='average'
-                )
-                plt.tight_layout()  # 여백 조정
-                st.pyplot(fig)
-
-    except Exception as e:
-        st.error(f"오류가 발생했습니다: {e}")
+# 결측 제거
+df = df.dropna(subset=[target_col])
+X = df.drop(columns=[targe]()
