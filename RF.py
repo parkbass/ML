@@ -1,4 +1,5 @@
-# RF_app_v18.py
+# RF_app_v19.py
+# [수정] st.pyplot(fig) 라인 끝의 불필요한 문자(```) 제거
 # [수정] 사용자의 실제 폰트 파일 이름('D2CodingBold-Ver1.3.2-20180524.ttf')을 정확히 인식하도록 수정
 # [개선] PDP에 부드러운 곡선(스무딩)과 원본 산점도를 함께 표시하여 경향성 파악 용이하게 변경
 
@@ -22,11 +23,10 @@ def smooth_1d(y, window=5):
     w = np.ones(window) / window
     return np.convolve(y, w, mode="same")
 
-# ===== 폰트 설정 함수 (정확한 파일 이름으로 수정) =====
+# ===== 폰트 설정 함수 =====
 def set_korean_font(user_font_path=None):
     try:
         script_dir = os.path.dirname(__file__)
-        # [수정] 실제 파일 이름을 여기에 정확하게 입력합니다. (확장자 .ttf 포함)
         local_font_filename = 'D2CodingBold-Ver1.3.2-20180524.ttf'
         font_path = os.path.join(script_dir, local_font_filename)
 
@@ -82,7 +82,6 @@ if uploaded is None:
     st.info("CSV, XLSX, XLS 파일을 업로드하세요. (.xls은 xlrd<2.0 필요)")
     st.stop()
 
-# ... (파일 읽기, 전처리, 모델 학습, 결과 표시 부분은 이전과 완전히 동일합니다) ...
 file_name = uploaded.name.lower()
 file_bytes = uploaded.read()
 df = None
@@ -104,7 +103,7 @@ try:
 except Exception as e: st.error(f"파일 읽기 중 오류: {e}"); st.stop()
 
 st.success(f"로드된 데이터 형태: {df.shape}")
-if df.shape[0] == 0 or df.shape[1] == 0: st.warning("데이터가 비어 있습니다."); st.stop()
+if df.shape == 0 or df.shape == 0: st.warning("데이터가 비어 있습니다."); st.stop()
 st.dataframe(df.head(30))
 
 df = df.replace(["#DIV/0!", "NaN", "nan", ""], np.nan)
@@ -192,7 +191,7 @@ else:
             )
             
             if ax_i.lines:
-                line = ax_i.lines[0]
+                line = ax_i.lines
                 x_data, y_data = line.get_data()
                 y_smooth = smooth_1d(y_data)
 
@@ -202,7 +201,7 @@ else:
                 
                 from sklearn.inspection._plot.partial_dependence import _get_deciles
                 deciles = _get_deciles(X_test[feat])
-                ax_i.plot(deciles, [ax_i.get_ylim()[0]] * len(deciles), "|", color="k")
+                ax_i.plot(deciles, [ax_i.get_ylim()] * len(deciles), "|", color="k")
 
                 ax_i.set_title(str(feat))
                 ax_i.set_xlabel(str(feat))
@@ -218,4 +217,5 @@ else:
         axes[j].set_visible(False)
 
     plt.tight_layout()
-    st.pyplot(fig)```
+    # [수정] 아래 라인에서 불필요한 ``` 제거
+    st.pyplot(fig)
