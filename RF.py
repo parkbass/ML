@@ -1,13 +1,14 @@
-# RF_app_v19.py
-# [수정] st.pyplot(fig) 라인 끝의 불필요한 문자(```) 제거
-# [수정] 사용자의 실제 폰트 파일 이름('D2CodingBold-Ver1.3.2-20180524.ttf')을 정확히 인식하도록 수정
-# [개선] PDP에 부드러운 곡선(스무딩)과 원본 산점도를 함께 표시하여 경향성 파악 용이하게 변경
+# RF_app_v20.py
+# [개선] 사용자가 분석에 사용할 독립 변수(Feature)를 직접 선택하는 기능 추가
+# [수정] PDP 그래프에 스무딩 곡선 + 산점도가 표시되지 않던 버그 수정
+# [수정] 테스트 데이터 비율 슬라이더의 기본값을 0.8로 변경
+# [제거] 불필요해진 사이드바의 폰트 업로드 기능 제거
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import io, os, tempfile
+import io, os
 from matplotlib import font_manager
 
 from sklearn.model_selection import train_test_split
@@ -24,28 +25,19 @@ def smooth_1d(y, window=5):
     return np.convolve(y, w, mode="same")
 
 # ===== 폰트 설정 함수 =====
-def set_korean_font(user_font_path=None):
+def set_korean_font():
     try:
         script_dir = os.path.dirname(__file__)
         local_font_filename = 'D2CodingBold-Ver1.3.2-20180524.ttf'
         font_path = os.path.join(script_dir, local_font_filename)
-
         if os.path.exists(font_path):
             font_manager.fontManager.addfont(font_path)
             fname = font_manager.FontProperties(fname=font_path).get_name()
             plt.rcParams["font.family"] = fname
             plt.rcParams["axes.unicode_minus"] = False
             return fname
-    except NameError:
-        pass
-
-    if user_font_path and os.path.exists(user_font_path):
-        font_manager.fontManager.addfont(user_font_path)
-        fname = font_manager.FontProperties(fname=user_font_path).get_name()
-        plt.rcParams["font.family"] = fname
-        plt.rcParams["axes.unicode_minus"] = False
-        return fname
-        
+    except NameError: pass
+    
     candidates = ["Malgun Gothic", "AppleGothic", "NanumGothic"]
     available = {f.name for f in font_manager.fontManager.ttflist}
     for name in candidates:
@@ -53,7 +45,6 @@ def set_korean_font(user_font_path=None):
             plt.rcParams["font.family"] = name
             plt.rcParams["axes.unicode_minus"] = False
             return name
-
     plt.rcParams["axes.unicode_minus"] = False
     return None
 
@@ -62,26 +53,18 @@ st.set_page_config(page_title="랜덤포레스트 기반 예측/분류 웹앱", 
 st.title("랜덤포레스트 기반 예측/분류 웹앱")
 st.sidebar.header("옵션")
 
-font_file = st.sidebar.file_uploader("한글 폰트 TTF 업로드(선택)", type=["ttf"])
-font_path = None
-if font_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".ttf") as tmp:
-        tmp.write(font_file.read())
-        font_path = tmp.name
+set_korean_font()
 
-applied_font = set_korean_font(font_path)
-if not applied_font:
-    st.sidebar.warning("한글 폰트를 찾지 못했습니다. 폰트 파일을 앱 폴더에 추가하거나, 직접 업로드 해주세요.")
-
-test_size = st.sidebar.slider("테스트 데이터 비율", 0.1, 0.8, 0.2, 0.05)
+# [수정] 테스트 데이터 비율 기본값을 0.8로 변경
+test_size = st.sidebar.slider("테스트 데이터 비율", 0.1, 0.9, 0.8, 0.05)
 st.sidebar.caption(f"현재 설정: 학습 데이터 {100 - test_size*100:.0f}% / 테스트 데이터 {test_size*100:.0f}%")
 
-# ===== 파일 업로드 및 이하 로직은 이전과 동일 =====
+# ===== 파일 업로드 및 데이터 로드 =====
 uploaded = st.file_uploader("CSV / XLSX / XLS 파일 업로드", type=["csv", "xlsx", "xls"])
 if uploaded is None:
-    st.info("CSV, XLSX, XLS 파일을 업로드하세요. (.xls은 xlrd<2.0 필요)")
+    st.info("CSV, XLSX, XLS 파일을 업로드하세요.")
     st.stop()
-
+# ... (파일 읽기 로직은 동일)
 file_name = uploaded.name.lower()
 file_bytes = uploaded.read()
 df = None
@@ -103,9 +86,10 @@ try:
 except Exception as e: st.error(f"파일 읽기 중 오류: {e}"); st.stop()
 
 st.success(f"로드된 데이터 형태: {df.shape}")
-if df.shape == 0 or df.shape == 0: st.warning("데이터가 비어 있습니다."); st.stop()
+if df.shape[0] == 0 or df.shape[1] == 0: st.warning("데이터가 비어 있습니다."); st.stop()
 st.dataframe(df.head(30))
 
+# ===== 전처리 (기존과 동일) =====
 df = df.replace(["#DIV/0!", "NaN", "nan", ""], np.nan)
 for col in df.columns:
     if df[col].dtype == object:
@@ -114,15 +98,30 @@ for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="ignore")
         except Exception: pass
 
-target_col = st.selectbox("예측/분류할 목표 변수(타깃)을 선택하세요", df.columns)
+# ===== 변수 선택 UI =====
+target_col = st.selectbox("1. 예측/분류할 목표 변수(타깃)을 선택하세요", df.columns)
 if not target_col: st.stop()
 
+available_features = df.drop(columns=[target_col]).columns.tolist()
+# [추가] 사용자가 분석에 사용할 변수를 선택하는 멀티셀렉트 박스
+selected_features = st.multiselect(
+    "2. 분석에 사용할 조작 변인(Feature)을 선택하세요", 
+    options=available_features, 
+    default=available_features
+)
+if not selected_features:
+    st.warning("분석에 사용할 변수를 하나 이상 선택해주세요.")
+    st.stop()
+
+# ===== 데이터 준비 (선택된 변수만 사용) =====
 df = df.dropna(subset=[target_col])
-X = df.drop(columns=[target_col])
+# [수정] X를 정의할 때 선택된 변수만 사용하도록 변경
+X = df[selected_features]
 y = df[target_col]
+
 X = X.dropna(axis=1, how="all")
 data = pd.concat([X, y], axis=1).dropna()
-X = data.drop(columns=[target_col])
+X = data[selected_features]
 y = data[target_col]
 
 dropped_cols = []
@@ -150,6 +149,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, r
 model = RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1) if task == "regression" else RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)
 model.fit(X_train, y_train)
 
+# ===== 결과 표시 (기존과 동일) =====
 st.subheader("모델 성능 결과")
 if task == "regression":
     r2 = r2_score(y_test, model.predict(X_test))
@@ -169,7 +169,7 @@ for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] + ax.get_xticklabels() +
     item.set_fontfamily(plt.rcParams["font.family"])
 st.pyplot(fig)
 
-# ===== PDP (스무딩 기능 포함) =====
+# ===== PDP (스무딩 버그 수정) =====
 st.subheader("변수별 영향 그래프 (PDP)")
 pdp_candidates = importances["변수"].tolist()
 default_vars = pdp_candidates[:4]
@@ -186,12 +186,11 @@ else:
     for i, feat in enumerate(selected_vars):
         ax_i = axes[i]
         try:
-            display = PartialDependenceDisplay.from_estimator(
-                model, X_test, features=[feat], kind="average", ax=ax_i
-            )
+            display = PartialDependenceDisplay.from_estimator(model, X_test, features=[feat], kind="average", ax=ax_i)
             
             if ax_i.lines:
-                line = ax_i.lines
+                # [수정] ax_i.lines는 리스트이므로 첫 번째 라인 객체를 인덱싱해야 함
+                line = ax_i.lines[0]
                 x_data, y_data = line.get_data()
                 y_smooth = smooth_1d(y_data)
 
@@ -201,21 +200,10 @@ else:
                 
                 from sklearn.inspection._plot.partial_dependence import _get_deciles
                 deciles = _get_deciles(X_test[feat])
-                ax_i.plot(deciles, [ax_i.get_ylim()] * len(deciles), "|", color="k")
+                ax_i.plot(deciles, [ax_i.get_ylim()[0]] * len(deciles), "|", color="k")
 
                 ax_i.set_title(str(feat))
                 ax_i.set_xlabel(str(feat))
                 ax_i.set_ylabel("Partial dependence")
             
-            for item in ([ax_i.title, ax.xaxis.label, ax.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
-                item.set_fontfamily(plt.rcParams["font.family"])
-        except Exception as e:
-            ax_i.set_visible(False)
-            st.warning(f"PDP 생성 중 오류({feat}): {e}")
-
-    for j in range(len(selected_vars), len(axes)):
-        axes[j].set_visible(False)
-
-    plt.tight_layout()
-    # [수정] 아래 라인에서 불필요한 ``` 제거
-    st.pyplot(fig)
+            for item in ([ax_i.title, ax_i.xaxis.label, ax_i.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
