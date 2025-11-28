@@ -1,4 +1,5 @@
-# RF_app_v20.py
+# RF_app_v21_final.py
+# [수정] PDP 그래프의 폰트 적용 반복문에서 발생한 IndentationError(들여쓰기 오류) 수정
 # [개선] 사용자가 분석에 사용할 독립 변수(Feature)를 직접 선택하는 기능 추가
 # [수정] PDP 그래프에 스무딩 곡선 + 산점도가 표시되지 않던 버그 수정
 # [수정] 테스트 데이터 비율 슬라이더의 기본값을 0.8로 변경
@@ -55,7 +56,6 @@ st.sidebar.header("옵션")
 
 set_korean_font()
 
-# [수정] 테스트 데이터 비율 기본값을 0.8로 변경
 test_size = st.sidebar.slider("테스트 데이터 비율", 0.1, 0.9, 0.8, 0.05)
 st.sidebar.caption(f"현재 설정: 학습 데이터 {100 - test_size*100:.0f}% / 테스트 데이터 {test_size*100:.0f}%")
 
@@ -64,7 +64,7 @@ uploaded = st.file_uploader("CSV / XLSX / XLS 파일 업로드", type=["csv", "x
 if uploaded is None:
     st.info("CSV, XLSX, XLS 파일을 업로드하세요.")
     st.stop()
-# ... (파일 읽기 로직은 동일)
+
 file_name = uploaded.name.lower()
 file_bytes = uploaded.read()
 df = None
@@ -89,7 +89,7 @@ st.success(f"로드된 데이터 형태: {df.shape}")
 if df.shape[0] == 0 or df.shape[1] == 0: st.warning("데이터가 비어 있습니다."); st.stop()
 st.dataframe(df.head(30))
 
-# ===== 전처리 (기존과 동일) =====
+# ===== 전처리 =====
 df = df.replace(["#DIV/0!", "NaN", "nan", ""], np.nan)
 for col in df.columns:
     if df[col].dtype == object:
@@ -103,7 +103,6 @@ target_col = st.selectbox("1. 예측/분류할 목표 변수(타깃)을 선택�
 if not target_col: st.stop()
 
 available_features = df.drop(columns=[target_col]).columns.tolist()
-# [추가] 사용자가 분석에 사용할 변수를 선택하는 멀티셀렉트 박스
 selected_features = st.multiselect(
     "2. 분석에 사용할 조작 변인(Feature)을 선택하세요", 
     options=available_features, 
@@ -113,9 +112,8 @@ if not selected_features:
     st.warning("분석에 사용할 변수를 하나 이상 선택해주세요.")
     st.stop()
 
-# ===== 데이터 준비 (선택된 변수만 사용) =====
+# ===== 데이터 준비 =====
 df = df.dropna(subset=[target_col])
-# [수정] X를 정의할 때 선택된 변수만 사용하도록 변경
 X = df[selected_features]
 y = df[target_col]
 
@@ -149,7 +147,7 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, r
 model = RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1) if task == "regression" else RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)
 model.fit(X_train, y_train)
 
-# ===== 결과 표시 (기존과 동일) =====
+# ===== 결과 표시 =====
 st.subheader("모델 성능 결과")
 if task == "regression":
     r2 = r2_score(y_test, model.predict(X_test))
@@ -169,7 +167,7 @@ for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] + ax.get_xticklabels() +
     item.set_fontfamily(plt.rcParams["font.family"])
 st.pyplot(fig)
 
-# ===== PDP (스무딩 버그 수정) =====
+# ===== PDP =====
 st.subheader("변수별 영향 그래프 (PDP)")
 pdp_candidates = importances["변수"].tolist()
 default_vars = pdp_candidates[:4]
@@ -189,7 +187,6 @@ else:
             display = PartialDependenceDisplay.from_estimator(model, X_test, features=[feat], kind="average", ax=ax_i)
             
             if ax_i.lines:
-                # [수정] ax_i.lines는 리스트이므로 첫 번째 라인 객체를 인덱싱해야 함
                 line = ax_i.lines[0]
                 x_data, y_data = line.get_data()
                 y_smooth = smooth_1d(y_data)
@@ -206,4 +203,15 @@ else:
                 ax_i.set_xlabel(str(feat))
                 ax_i.set_ylabel("Partial dependence")
             
+            # [수정] 아래 for 반복문 블록의 들여쓰기 수정
             for item in ([ax_i.title, ax_i.xaxis.label, ax_i.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
+                item.set_fontfamily(plt.rcParams["font.family"])
+        except Exception as e:
+            ax_i.set_visible(False)
+            st.warning(f"PDP 생성 중 오류({feat}): {e}")
+
+    for j in range(len(selected_vars), len(axes)):
+        axes[j].set_visible(False)
+
+    plt.tight_layout()
+    st.pyplot(fig)
