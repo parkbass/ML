@@ -1,7 +1,7 @@
-# RF_app_v11.py
+# RF_app_v12.py
 # - CSV/XLSX/XLS 지원 + 시트 선택
 # - 한글 폰트: (1) 업로드 TTF → (2) GitHub NotoSansKR 자동 로드 → (3) 로컬 폰트 탐색
-# - 테스트 비율 슬라이더 (0.1~0.8, 기본 0.2)
+# - 테스트 비율 슬라이더 (기본 0.8)
 # - 성능: 설명력(R²) 또는 정확도(Accuracy)
 # - PDP: multiselect로 변수 선택, 2개씩 배치
 #        + moving-average 스무딩으로 곡선 + 원래 PDP 점도 같이 표시
@@ -111,9 +111,9 @@ if (not applied_font) and (font_file is None):
     )
 
 test_size = st.sidebar.slider(
-    "테스트 데이터 비율", min_value=0.1, max_value=0.8, value=0.2, step=0.05
+    "테스트 데이터 비율", min_value=0.1, max_value=0.8, value=0.8, step=0.05
 )
-st.sidebar.caption("※ 학습:테스트 = 1 - 비율 : 비율 (예: 0.2 → 8:2)")
+st.sidebar.caption("※ 학습:테스트 = 1 - 비율 : 비율 (예: 0.8 → 2:8)")
 
 # ===== 파일 업로드 =====
 uploaded = st.file_uploader("CSV / XLSX / XLS 파일 업로드", type=["csv", "xlsx", "xls"])
@@ -276,40 +276,27 @@ else:
     axes = np.atleast_1d(axes).flatten()
 
     for i, feat in enumerate(selected_vars):
+        ax_i = axes[i]
         try:
-            # 1) PDP를 임시로 계산 (disp 객체만 필요)
+            # 1) 우선 sklearn이 PDP를 ax_i 위에 그리게 함
             disp = PartialDependenceDisplay.from_estimator(
-                model, X_test, features=[feat], kind="average"
+                model, X_test, features=[feat], kind="average", ax=ax_i
             )
 
-            # 2) PDP 선 데이터 추출 (버전과 상관없이 첫 Line2D 찾기)
-            line_obj = None
-            for group in disp.lines_:
-                # group이 Line2D 리스트인 경우
-                if isinstance(group, (list, tuple)):
-                    for ln in group:
-                        if hasattr(ln, "get_xdata"):
-                            line_obj = ln
-                            break
-                else:
-                    if hasattr(group, "get_xdata"):
-                        line_obj = group
-                if line_obj is not None:
-                    break
-
-            if line_obj is None:
-                axes[i].set_visible(False)
+            # 2) 방금 그려진 선 데이터를 축에서 직접 가져옴
+            if not ax_i.lines:
+                # 혹시라도 선이 없다면 그냥 패스
                 continue
 
+            line_obj = ax_i.lines[0]  # 첫 번째 선
             x = line_obj.get_xdata()
             y = line_obj.get_ydata()
 
             # 3) 스무딩 적용
             y_smooth = smooth_1d(y, window=5)
 
-            # 4) 우리 축에 다시 그리기
-            ax_i = axes[i]
-            ax_i.clear()
+            # 4) 기존 선/틱 막대 제거 후 다시 그림
+            ax_i.cla()
             ax_i.plot(x, y_smooth, "-", linewidth=2)
             ax_i.scatter(x, y, s=10, color="gray", alpha=0.5)
             ax_i.set_title(str(feat), fontfamily=plt.rcParams["font.family"])
@@ -326,11 +313,13 @@ else:
                 item.set_fontfamily(plt.rcParams["font.family"])
 
         except Exception as e:
-            axes[i].set_visible(False)
+            ax_i.set_visible(False)
             st.warning(f"PDP 생성 중 오류({feat}): {e}")
 
     # 남는 축 숨기기
-    for j in range(i + 1, len(axes)):
+    # (selected_vars가 len 1일 때를 대비하여 안전하게 처리)
+    last_index = len(selected_vars) - 1
+    for j in range(last_index + 1, len(axes)):
         axes[j].set_visible(False)
 
     plt.tight_layout()
