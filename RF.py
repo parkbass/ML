@@ -1,6 +1,7 @@
-# RF_app_v14.py
-# [수정] PDP 생성 시 Key 오류 해결 ('values' -> feat)
-# [수정] 폰트 로직 강화: (0) 앱 로컬 경로의 폰트 → (1) 업로드 TTF → (2) GitHub ...
+# RF_app_v16.py
+# [수정] 폰트 용량 문제 해결: 경량 폰트(D2Coding.ttf)를 앱에 포함하는 방식으로 변경
+# [수정] PDP 로직 복원 및 안정성 강화: PartialDependenceDisplay를 사용하되,
+#         라인이 없는 그래프(범주형 변수 등)에서도 오류가 나지 않도록 수정
 
 import streamlit as st
 import pandas as pd
@@ -12,7 +13,7 @@ from matplotlib import font_manager
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.metrics import r2_score, accuracy_score
-from sklearn.inspection import partial_dependence
+from sklearn.inspection import PartialDependenceDisplay # 고수준 시각화 함수로 복귀
 from sklearn.preprocessing import LabelEncoder
 
 # ===== 유틸: 간단 스무딩 함수 (moving average) =====
@@ -22,10 +23,10 @@ def smooth_1d(y, window=5):
     w = np.ones(window) / window
     return np.convolve(y, w, mode="same")
 
-# ===== 폰트 설정 함수 (개선) =====
+# ===== 폰트 설정 함수 (경량 폰트 포함 방식으로 수정) =====
 def set_korean_font(user_font_path=None):
-    # 0) [추가] 앱과 함께 배포된 로컬 폰트 파일을 가장 먼저 확인
-    local_font_filename = 'NotoSansKR-Regular.otf'
+    # 0) [수정] 앱과 함께 배포된 D2Coding.ttf를 가장 먼저 확인
+    local_font_filename = 'D2Coding.ttf' 
     if os.path.exists(local_font_filename):
         font_manager.fontManager.addfont(local_font_filename)
         fname = font_manager.FontProperties(fname=local_font_filename).get_name()
@@ -33,33 +34,16 @@ def set_korean_font(user_font_path=None):
         plt.rcParams["axes.unicode_minus"] = False
         return fname
 
-    # 1) 사용자가 업로드한 폰트
+    # 1) 사용자가 업로드한 폰트 (차선책)
     if user_font_path and os.path.exists(user_font_path):
         font_manager.fontManager.addfont(user_font_path)
         fname = font_manager.FontProperties(fname=user_font_path).get_name()
         plt.rcParams["font.family"] = fname
         plt.rcParams["axes.unicode_minus"] = False
         return fname
-
-    # 2) GitHub NotoSansKR 자동 로드 시도
-    try:
-        import requests
-        url = "https://github.com/google/fonts/raw/main/ofl/notosanskr/NotoSansKR-Regular.otf"
-        resp = requests.get(url, timeout=5)
-        resp.raise_for_status()
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".otf") as tmpf:
-            tmpf.write(resp.content)
-            remote_path = tmpf.name
-        font_manager.fontManager.addfont(remote_path)
-        fname = font_manager.FontProperties(fname=remote_path).get_name()
-        plt.rcParams["font.family"] = fname
-        plt.rcParams["axes.unicode_minus"] = False
-        return fname
-    except Exception:
-        pass
-
-    # 3) 로컬 한글 폰트 탐색
-    candidates = ["Malgun Gothic", "AppleGothic", "NanumGothic", "Noto Sans CJK KR", "Noto Sans KR", "Source Han Sans KR"]
+        
+    # 2) 시스템 폰트 탐색 (최후의 수단)
+    candidates = ["Malgun Gothic", "AppleGothic", "NanumGothic"]
     available = {f.name for f in font_manager.fontManager.ttflist}
     for name in candidates:
         if name in available:
@@ -70,11 +54,10 @@ def set_korean_font(user_font_path=None):
     plt.rcParams["axes.unicode_minus"] = False
     return None
 
-# ===== Streamlit 기본 설정 =====
+# ===== Streamlit 기본 설정 및 사이드바 =====
 st.set_page_config(page_title="랜덤포레스트 기반 예측/분류 웹앱", layout="wide")
 st.title("랜덤포레스트 기반 예측/분류 웹앱")
 
-# ===== 사이드바 =====
 st.sidebar.header("옵션")
 
 font_file = st.sidebar.file_uploader("한글 폰트 TTF 업로드(선택)", type=["ttf"])
@@ -85,19 +68,19 @@ if font_file is not None:
         font_path = tmp.name
 
 applied_font = set_korean_font(font_path)
-if (not applied_font) and (font_file is None):
-    st.sidebar.warning("시스템/원격 한글 폰트를 찾지 못했습니다. 앱에 포함된 NotoSansKR 폰트가 필요합니다.")
+if not applied_font:
+    st.sidebar.warning("한글 폰트를 찾지 못했습니다. D2Coding.ttf 파일을 앱 폴더에 추가해주세요.")
 
 test_size = st.sidebar.slider("테스트 데이터 비율", 0.1, 0.8, 0.2, 0.05)
 st.sidebar.caption(f"현재 설정: 학습 데이터 {100 - test_size*100:.0f}% / 테스트 데이터 {test_size*100:.0f}%")
 
-# ===== 파일 업로드 =====
+# ===== 파일 업로드 및 처리 (이전과 동일) =====
 uploaded = st.file_uploader("CSV / XLSX / XLS 파일 업로드", type=["csv", "xlsx", "xls"])
 if uploaded is None:
     st.info("CSV, XLSX, XLS 파일을 업로드하세요. (.xls은 xlrd<2.0 필요)")
     st.stop()
-
-# ... (파일 읽기 및 전처리 부분은 변경 없음) ...
+# ... (파일 읽기, 전처리, 모델 학습, 결과 표시 부분은 모두 동일) ...
+# (이전 코드에서 이 부분은 그대로 복사해서 사용하시면 됩니다)
 file_name = uploaded.name.lower()
 file_bytes = uploaded.read()
 df = None
@@ -185,7 +168,7 @@ for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] + ax.get_xticklabels() +
     item.set_fontfamily(plt.rcParams["font.family"])
 st.pyplot(fig)
 
-# ===== PDP (오류 수정) =====
+# ===== PDP (안정성을 강화한 최종 수정 로직) =====
 st.subheader("변수별 영향 그래프 (PDP)")
 pdp_candidates = importances["변수"].tolist()
 default_vars = pdp_candidates[:4]
@@ -202,17 +185,27 @@ else:
     for i, feat in enumerate(selected_vars):
         ax_i = axes[i]
         try:
-            pdp_result = partial_dependence(model, X_test, features=feat, kind="average")
-            # [수정] 키를 'values'가 아닌 변수명(feat)으로 접근
-            x_values = pdp_result[feat][0]
-            y_values = pdp_result['average'][0]
+            # 1) scikit-learn의 고수준 함수로 PDP를 먼저 그리게 함 (가장 안정적)
+            display = PartialDependenceDisplay.from_estimator(
+                model, X_test, features=[feat], kind="average", ax=ax_i
+            )
             
-            y_smooth = smooth_1d(y_values)
+            # 2) [핵심] 그려진 그래프에 라인(선)이 있는지 확인 -> 라인이 있어야 스무딩 가능
+            if ax_i.lines:
+                # 3) 라인이 있다면, 데이터를 추출하여 스무딩 후 다시 그림
+                line = ax_i.lines[0]
+                x_data, y_data = line.get_data()
+                y_smooth = smooth_1d(y_data)
+
+                ax_i.cla() # 기존 그래프 지우기
+                ax_i.plot(x_data, y_smooth, "-", linewidth=2)
+                ax_i.scatter(x_data, y_data, s=10, color="gray", alpha=0.5)
+                ax_i.set_title(str(feat))
+                ax_i.set_xlabel(str(feat))
+                ax_i.set_ylabel("Partial dependence")
+            # 4) 라인이 없다면(예: 범주형 변수의 막대그래프), 그냥 그대로 둠
             
-            ax_i.plot(x_values, y_smooth, "-", linewidth=2)
-            ax_i.scatter(x_values, y_values, s=10, color="gray", alpha=0.5)
-            ax_i.set_title(str(feat)); ax_i.set_xlabel(str(feat)); ax_i.set_ylabel("Partial dependence")
-            
+            # 5) 폰트 일괄 적용
             for item in ([ax_i.title, ax_i.xaxis.label, ax_i.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
                 item.set_fontfamily(plt.rcParams["font.family"])
         except Exception as e:
@@ -224,5 +217,3 @@ else:
 
     plt.tight_layout()
     st.pyplot(fig)
-
-st.caption("※ 그래프 한글이 깨지면 폰트 파일을 업로드하거나, 앱에 포함된 폰트가 올바른지 확인해주세요.")
