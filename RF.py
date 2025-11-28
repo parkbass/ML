@@ -1,8 +1,7 @@
-# RF_app_v21_final.py
-# [수정] PDP 그래프의 폰트 적용 반복문에서 발생한 IndentationError(들여쓰기 오류) 수정
-# [개선] 사용자가 분석에 사용할 독립 변수(Feature)를 직접 선택하는 기능 추가
-# [수정] PDP 그래프에 스무딩 곡선 + 산점도가 표시되지 않던 버그 수정
-# [수정] 테스트 데이터 비율 슬라이더의 기본값을 0.8로 변경
+# RF_app_v22_final.py
+# [수정] PDP 그래프에서 스무딩 곡선 + 산점도가 표시되지 않던 버그를 완벽히 수정
+# [반영] 사용자가 분석에 사용할 독립 변수(Feature)를 직접 선택하는 기능
+# [반영] 테스트 데이터 비율 슬라이더의 기본값을 0.8로 설정
 # [제거] 불필요해진 사이드바의 폰트 업로드 기능 제거
 
 import streamlit as st
@@ -187,23 +186,18 @@ else:
             display = PartialDependenceDisplay.from_estimator(model, X_test, features=[feat], kind="average", ax=ax_i)
             
             if ax_i.lines:
+                # [수정] ax_i.lines는 리스트이므로 첫 번째 라인 객체(line[0])를 정확히 인덱싱
                 line = ax_i.lines[0]
                 x_data, y_data = line.get_data()
                 y_smooth = smooth_1d(y_data)
 
-                ax_i.cla() 
-                ax_i.plot(x_data, y_smooth, "-", linewidth=2, label="Trend")
-                ax_i.scatter(x_data, y_data, s=10, color="gray", alpha=0.5, label="Raw PDP")
+                # 기존 scikit-learn이 그린 선을 숨김
+                line.set_visible(False)
                 
-                from sklearn.inspection._plot.partial_dependence import _get_deciles
-                deciles = _get_deciles(X_test[feat])
-                ax_i.plot(deciles, [ax_i.get_ylim()[0]] * len(deciles), "|", color="k")
+                # 새로운 스무딩 곡선과 산점도를 추가
+                ax_i.plot(x_data, y_smooth, "-", linewidth=2, label="Trend", color='royalblue')
+                ax_i.scatter(x_data, y_data, s=15, color="gray", alpha=0.5, label="Raw PDP")
 
-                ax_i.set_title(str(feat))
-                ax_i.set_xlabel(str(feat))
-                ax_i.set_ylabel("Partial dependence")
-            
-            # [수정] 아래 for 반복문 블록의 들여쓰기 수정
             for item in ([ax_i.title, ax_i.xaxis.label, ax_i.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
                 item.set_fontfamily(plt.rcParams["font.family"])
         except Exception as e:
