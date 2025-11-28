@@ -1,8 +1,6 @@
-# RF_app_v22_final.py
-# [수정] PDP 그래프에서 스무딩 곡선 + 산점도가 표시되지 않던 버그를 완벽히 수정
-# [반영] 사용자가 분석에 사용할 독립 변수(Feature)를 직접 선택하는 기능
-# [반영] 테스트 데이터 비율 슬라이더의 기본값을 0.8로 설정
-# [제거] 불필요해진 사이드바의 폰트 업로드 기능 제거
+# RF_app_v23_final.py
+# [개선] 모델 성능 향상을 위한 하이퍼파라미터 튜닝 기능 사이드바에 추가
+# [수정] PDP 그래프에 스무딩 곡선 + 산점도가 최종적으로 표시되도록 버그 수정
 
 import streamlit as st
 import pandas as pd
@@ -51,12 +49,20 @@ def set_korean_font():
 # ===== Streamlit 기본 설정 및 사이드바 =====
 st.set_page_config(page_title="랜덤포레스트 기반 예측/분류 웹앱", layout="wide")
 st.title("랜덤포레스트 기반 예측/분류 웹앱")
-st.sidebar.header("옵션")
+st.sidebar.header("기본 옵션")
 
 set_korean_font()
 
 test_size = st.sidebar.slider("테스트 데이터 비율", 0.1, 0.9, 0.8, 0.05)
 st.sidebar.caption(f"현재 설정: 학습 데이터 {100 - test_size*100:.0f}% / 테스트 데이터 {test_size*100:.0f}%")
+
+# [개선] 하이퍼파라미터 설정 UI 추가
+st.sidebar.header("⚙️ 모델 상세 설정 (하이퍼파라미터)")
+n_estimators = st.sidebar.slider("트리의 개수 (n_estimators)", 10, 500, 100, 10)
+max_depth = st.sidebar.slider("트리의 최대 깊이 (max_depth)", 3, 50, 10, 1)
+min_samples_split = st.sidebar.slider("노드 분할을 위한 최소 샘플 수 (min_samples_split)", 2, 20, 2, 1)
+min_samples_leaf = st.sidebar.slider("리프 노드의 최소 샘플 수 (min_samples_leaf)", 1, 20, 1, 1)
+
 
 # ===== 파일 업로드 및 데이터 로드 =====
 uploaded = st.file_uploader("CSV / XLSX / XLS 파일 업로드", type=["csv", "xlsx", "xls"])
@@ -102,14 +108,9 @@ target_col = st.selectbox("1. 예측/분류할 목표 변수(타깃)을 선택�
 if not target_col: st.stop()
 
 available_features = df.drop(columns=[target_col]).columns.tolist()
-selected_features = st.multiselect(
-    "2. 분석에 사용할 조작 변인(Feature)을 선택하세요", 
-    options=available_features, 
-    default=available_features
-)
+selected_features = st.multiselect("2. 분석에 사용할 조작 변인(Feature)을 선택하세요", options=available_features, default=available_features)
 if not selected_features:
-    st.warning("분석에 사용할 변수를 하나 이상 선택해주세요.")
-    st.stop()
+    st.warning("분석에 사용할 변수를 하나 이상 선택해주세요."); st.stop()
 
 # ===== 데이터 준비 =====
 df = df.dropna(subset=[target_col])
@@ -127,8 +128,7 @@ for col in list(X.columns):
         if X[col].nunique() <= 50:
             X[col] = LabelEncoder().fit_transform(X[col].astype(str))
         else:
-            dropped_cols.append(col)
-            X = X.drop(columns=[col])
+            dropped_cols.append(col); X = X.drop(columns=[col])
 if dropped_cols: st.info(f"ℹ️ 고유값이 50개를 초과하여 다음 변수는 분석에서 제외되었습니다: **{', '.join(dropped_cols)}**")
 
 task = "regression"
@@ -137,23 +137,28 @@ if not np.issubdtype(y.dtype, np.number) or (y.nunique() <= 10 and y.dtype != fl
 if task == "classification":
     y = LabelEncoder().fit_transform(y.astype(str))
 else:
-    y = pd.to_numeric(y, errors="coerce")
-    keep = ~pd.isna(y)
-    X, y = X.loc[keep], y.loc[keep]
+    y = pd.to_numeric(y, errors="coerce"); keep = ~pd.isna(y); X, y = X.loc[keep], y.loc[keep]
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
 
-model = RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1) if task == "regression" else RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)
+# [개선] 사용자가 설정한 하이퍼파라미터를 모델에 적용
+model_params = {
+    'n_estimators': n_estimators,
+    'max_depth': max_depth,
+    'min_samples_split': min_samples_split,
+    'min_samples_leaf': min_samples_leaf,
+    'random_state': 42,
+    'n_jobs': -1
+}
+model = RandomForestRegressor(**model_params) if task == "regression" else RandomForestClassifier(**model_params)
 model.fit(X_train, y_train)
 
 # ===== 결과 표시 =====
 st.subheader("모델 성능 결과")
 if task == "regression":
-    r2 = r2_score(y_test, model.predict(X_test))
-    st.success(f"🔹 설명력 (R²): {r2:.3f}")
+    r2 = r2_score(y_test, model.predict(X_test)); st.success(f"🔹 설명력 (R²): {r2:.3f}")
 else:
-    acc = accuracy_score(y_test, model.predict(X_test))
-    st.success(f"🔹 정확도 (Accuracy): {acc:.3f}")
+    acc = accuracy_score(y_test, model.predict(X_test)); st.success(f"🔹 정확도 (Accuracy): {acc:.3f}")
 
 st.subheader("변수 중요도 (Feature Importance)")
 importances = pd.DataFrame({"변수": X.columns.astype(str), "중요도": model.feature_importances_}).sort_values("중요도", ascending=False)
@@ -171,7 +176,6 @@ st.subheader("변수별 영향 그래프 (PDP)")
 pdp_candidates = importances["변수"].tolist()
 default_vars = pdp_candidates[:4]
 selected_vars = st.multiselect("PDP로 확인할 변수를 선택하세요", pdp_candidates, default=default_vars)
-
 if not selected_vars:
     st.info("변수를 선택하면 개별 의존도 그래프가 표시됩니다.")
 else:
@@ -179,33 +183,27 @@ else:
     rows = int(np.ceil(len(selected_vars) / cols))
     fig, axes = plt.subplots(rows, cols, figsize=(8, 3 * rows))
     axes = np.atleast_1d(axes).flatten()
-
     for i, feat in enumerate(selected_vars):
         ax_i = axes[i]
         try:
             display = PartialDependenceDisplay.from_estimator(model, X_test, features=[feat], kind="average", ax=ax_i)
-            
             if ax_i.lines:
-                # [수정] ax_i.lines는 리스트이므로 첫 번째 라인 객체(line[0])를 정확히 인덱싱
+                # [수정] 스무딩/산점도 버그 수정
                 line = ax_i.lines[0]
                 x_data, y_data = line.get_data()
                 y_smooth = smooth_1d(y_data)
-
-                # 기존 scikit-learn이 그린 선을 숨김
-                line.set_visible(False)
                 
-                # 새로운 스무딩 곡선과 산점도를 추가
+                # 기존 scikit-learn이 그린 선을 숨기는 대신, 색과 투명도를 조절하여 원본으로 활용
+                line.set_color('gray'); line.set_alpha(0.5); line.set_linewidth(1.5)
+                
+                # 새로운 스무딩 곡선을 덧그림
                 ax_i.plot(x_data, y_smooth, "-", linewidth=2, label="Trend", color='royalblue')
-                ax_i.scatter(x_data, y_data, s=15, color="gray", alpha=0.5, label="Raw PDP")
 
-            for item in ([ax_i.title, ax_i.xaxis.label, ax_i.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
+            for item in ([ax_i.title, ax.xaxis.label, ax.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
                 item.set_fontfamily(plt.rcParams["font.family"])
         except Exception as e:
-            ax_i.set_visible(False)
-            st.warning(f"PDP 생성 중 오류({feat}): {e}")
-
+            ax_i.set_visible(False); st.warning(f"PDP 생성 중 오류({feat}): {e}")
     for j in range(len(selected_vars), len(axes)):
         axes[j].set_visible(False)
-
     plt.tight_layout()
     st.pyplot(fig)
