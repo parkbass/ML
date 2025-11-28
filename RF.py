@@ -1,7 +1,6 @@
-# RF_app_v16.py
-# [수정] 폰트 용량 문제 해결: 경량 폰트(D2Coding.ttf)를 앱에 포함하는 방식으로 변경
-# [수정] PDP 로직 복원 및 안정성 강화: PartialDependenceDisplay를 사용하되,
-#         라인이 없는 그래프(범주형 변수 등)에서도 오류가 나지 않도록 수정
+# RF_app_v18.py
+# [수정] 사용자의 실제 폰트 파일 이름('D2CodingBold-Ver1.3.2-20180524.ttf')을 정확히 인식하도록 수정
+# [개선] PDP에 부드러운 곡선(스무딩)과 원본 산점도를 함께 표시하여 경향성 파악 용이하게 변경
 
 import streamlit as st
 import pandas as pd
@@ -13,28 +12,33 @@ from matplotlib import font_manager
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.metrics import r2_score, accuracy_score
-from sklearn.inspection import PartialDependenceDisplay # 고수준 시각화 함수로 복귀
+from sklearn.inspection import PartialDependenceDisplay
 from sklearn.preprocessing import LabelEncoder
 
-# ===== 유틸: 간단 스무딩 함수 (moving average) =====
+# ===== 유틸: 간단 스무딩 함수 =====
 def smooth_1d(y, window=5):
     y = np.asarray(y)
     if len(y) <= window: return y
     w = np.ones(window) / window
     return np.convolve(y, w, mode="same")
 
-# ===== 폰트 설정 함수 (경량 폰트 포함 방식으로 수정) =====
+# ===== 폰트 설정 함수 (정확한 파일 이름으로 수정) =====
 def set_korean_font(user_font_path=None):
-    # 0) [수정] 앱과 함께 배포된 D2Coding.ttf를 가장 먼저 확인
-    local_font_filename = 'D2Coding.ttf' 
-    if os.path.exists(local_font_filename):
-        font_manager.fontManager.addfont(local_font_filename)
-        fname = font_manager.FontProperties(fname=local_font_filename).get_name()
-        plt.rcParams["font.family"] = fname
-        plt.rcParams["axes.unicode_minus"] = False
-        return fname
+    try:
+        script_dir = os.path.dirname(__file__)
+        # [수정] 실제 파일 이름을 여기에 정확하게 입력합니다. (확장자 .ttf 포함)
+        local_font_filename = 'D2CodingBold-Ver1.3.2-20180524.ttf'
+        font_path = os.path.join(script_dir, local_font_filename)
 
-    # 1) 사용자가 업로드한 폰트 (차선책)
+        if os.path.exists(font_path):
+            font_manager.fontManager.addfont(font_path)
+            fname = font_manager.FontProperties(fname=font_path).get_name()
+            plt.rcParams["font.family"] = fname
+            plt.rcParams["axes.unicode_minus"] = False
+            return fname
+    except NameError:
+        pass
+
     if user_font_path and os.path.exists(user_font_path):
         font_manager.fontManager.addfont(user_font_path)
         fname = font_manager.FontProperties(fname=user_font_path).get_name()
@@ -42,7 +46,6 @@ def set_korean_font(user_font_path=None):
         plt.rcParams["axes.unicode_minus"] = False
         return fname
         
-    # 2) 시스템 폰트 탐색 (최후의 수단)
     candidates = ["Malgun Gothic", "AppleGothic", "NanumGothic"]
     available = {f.name for f in font_manager.fontManager.ttflist}
     for name in candidates:
@@ -57,7 +60,6 @@ def set_korean_font(user_font_path=None):
 # ===== Streamlit 기본 설정 및 사이드바 =====
 st.set_page_config(page_title="랜덤포레스트 기반 예측/분류 웹앱", layout="wide")
 st.title("랜덤포레스트 기반 예측/분류 웹앱")
-
 st.sidebar.header("옵션")
 
 font_file = st.sidebar.file_uploader("한글 폰트 TTF 업로드(선택)", type=["ttf"])
@@ -69,18 +71,18 @@ if font_file is not None:
 
 applied_font = set_korean_font(font_path)
 if not applied_font:
-    st.sidebar.warning("한글 폰트를 찾지 못했습니다. D2Coding.ttf 파일을 앱 폴더에 추가해주세요.")
+    st.sidebar.warning("한글 폰트를 찾지 못했습니다. 폰트 파일을 앱 폴더에 추가하거나, 직접 업로드 해주세요.")
 
 test_size = st.sidebar.slider("테스트 데이터 비율", 0.1, 0.8, 0.2, 0.05)
 st.sidebar.caption(f"현재 설정: 학습 데이터 {100 - test_size*100:.0f}% / 테스트 데이터 {test_size*100:.0f}%")
 
-# ===== 파일 업로드 및 처리 (이전과 동일) =====
+# ===== 파일 업로드 및 이하 로직은 이전과 동일 =====
 uploaded = st.file_uploader("CSV / XLSX / XLS 파일 업로드", type=["csv", "xlsx", "xls"])
 if uploaded is None:
     st.info("CSV, XLSX, XLS 파일을 업로드하세요. (.xls은 xlrd<2.0 필요)")
     st.stop()
-# ... (파일 읽기, 전처리, 모델 학습, 결과 표시 부분은 모두 동일) ...
-# (이전 코드에서 이 부분은 그대로 복사해서 사용하시면 됩니다)
+
+# ... (파일 읽기, 전처리, 모델 학습, 결과 표시 부분은 이전과 완전히 동일합니다) ...
 file_name = uploaded.name.lower()
 file_bytes = uploaded.read()
 df = None
@@ -168,7 +170,7 @@ for item in ([ax.title, ax.xaxis.label, ax.yaxis.label] + ax.get_xticklabels() +
     item.set_fontfamily(plt.rcParams["font.family"])
 st.pyplot(fig)
 
-# ===== PDP (안정성을 강화한 최종 수정 로직) =====
+# ===== PDP (스무딩 기능 포함) =====
 st.subheader("변수별 영향 그래프 (PDP)")
 pdp_candidates = importances["변수"].tolist()
 default_vars = pdp_candidates[:4]
@@ -185,28 +187,28 @@ else:
     for i, feat in enumerate(selected_vars):
         ax_i = axes[i]
         try:
-            # 1) scikit-learn의 고수준 함수로 PDP를 먼저 그리게 함 (가장 안정적)
             display = PartialDependenceDisplay.from_estimator(
                 model, X_test, features=[feat], kind="average", ax=ax_i
             )
             
-            # 2) [핵심] 그려진 그래프에 라인(선)이 있는지 확인 -> 라인이 있어야 스무딩 가능
             if ax_i.lines:
-                # 3) 라인이 있다면, 데이터를 추출하여 스무딩 후 다시 그림
                 line = ax_i.lines[0]
                 x_data, y_data = line.get_data()
                 y_smooth = smooth_1d(y_data)
 
-                ax_i.cla() # 기존 그래프 지우기
-                ax_i.plot(x_data, y_smooth, "-", linewidth=2)
-                ax_i.scatter(x_data, y_data, s=10, color="gray", alpha=0.5)
+                ax_i.cla() 
+                ax_i.plot(x_data, y_smooth, "-", linewidth=2, label="Trend")
+                ax_i.scatter(x_data, y_data, s=10, color="gray", alpha=0.5, label="Raw PDP")
+                
+                from sklearn.inspection._plot.partial_dependence import _get_deciles
+                deciles = _get_deciles(X_test[feat])
+                ax_i.plot(deciles, [ax_i.get_ylim()[0]] * len(deciles), "|", color="k")
+
                 ax_i.set_title(str(feat))
                 ax_i.set_xlabel(str(feat))
                 ax_i.set_ylabel("Partial dependence")
-            # 4) 라인이 없다면(예: 범주형 변수의 막대그래프), 그냥 그대로 둠
             
-            # 5) 폰트 일괄 적용
-            for item in ([ax_i.title, ax_i.xaxis.label, ax_i.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
+            for item in ([ax_i.title, ax.xaxis.label, ax.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
                 item.set_fontfamily(plt.rcParams["font.family"])
         except Exception as e:
             ax_i.set_visible(False)
@@ -216,4 +218,4 @@ else:
         axes[j].set_visible(False)
 
     plt.tight_layout()
-    st.pyplot(fig)
+    st.pyplot(fig)```
