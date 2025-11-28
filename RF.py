@@ -1,10 +1,10 @@
-# RF_app_v10.py
+# RF_app_v11.py
 # - CSV/XLSX/XLS 지원 + 시트 선택
 # - 한글 폰트: (1) 업로드 TTF → (2) GitHub NotoSansKR 자동 로드 → (3) 로컬 폰트 탐색
-# - 테스트 비율 0.8 고정
+# - 테스트 비율 슬라이더 (0.1~0.8, 기본 0.2)
 # - 성능: 설명력(R²) 또는 정확도(Accuracy)
 # - PDP: multiselect로 변수 선택, 2개씩 배치
-#        + moving-average 스무딩으로 곡선 형태 + 실제 점은 산점도로 표시
+#        + moving-average 스무딩으로 곡선 + 원래 PDP 점도 같이 표시
 
 import streamlit as st
 import pandas as pd
@@ -19,6 +19,7 @@ from sklearn.metrics import r2_score, accuracy_score
 from sklearn.inspection import PartialDependenceDisplay
 from sklearn.preprocessing import LabelEncoder
 
+
 # ===== 유틸: 간단 스무딩 함수 (moving average) =====
 def smooth_1d(y, window=5):
     """1차원 배열 y를 이동평균으로 부드럽게 만듭니다."""
@@ -27,6 +28,7 @@ def smooth_1d(y, window=5):
         return y
     w = np.ones(window) / window
     return np.convolve(y, w, mode="same")
+
 
 # ===== 폰트 설정 함수 =====
 def set_korean_font(user_font_path=None):
@@ -44,9 +46,10 @@ def set_korean_font(user_font_path=None):
         plt.rcParams["axes.unicode_minus"] = False
         return fname
 
-    # 2) GitHub NotoSansKR 자동 로드 시도 (인터넷 연결 시)
+    # 2) GitHub NotoSansKR 자동 로드 시도 (인터넷 연결 필요)
     try:
         import requests
+
         url = (
             "https://github.com/google/fonts/raw/main/ofl/notosanskr/"
             "NotoSansKR-Regular.otf"
@@ -62,7 +65,7 @@ def set_korean_font(user_font_path=None):
         plt.rcParams["axes.unicode_minus"] = False
         return fname
     except Exception:
-        # 인터넷이 없거나 requests 미설치 등은 조용히 무시
+        # 인터넷이 없거나 requests 설치 문제 등은 조용히 무시
         pass
 
     # 3) 로컬 한글 폰트 탐색
@@ -85,12 +88,14 @@ def set_korean_font(user_font_path=None):
     plt.rcParams["axes.unicode_minus"] = False
     return None
 
+
 # ===== Streamlit 기본 설정 =====
 st.set_page_config(page_title="랜덤포레스트 기반 예측/분류 웹앱", layout="wide")
 st.title("랜덤포레스트 기반 예측/분류 웹앱")
 
-# ===== 사이드바: 폰트 업로드(선택) =====
+# ===== 사이드바: 폰트 업로드 + 테스트 비율 설정 =====
 st.sidebar.header("옵션")
+
 font_file = st.sidebar.file_uploader("한글 폰트 TTF 업로드(선택)", type=["ttf"])
 font_path = None
 if font_file is not None:
@@ -104,6 +109,11 @@ if (not applied_font) and (font_file is None):
         "시스템에서 한글 폰트를 찾지 못했습니다. "
         "그래프 한글이 깨지면 TTF를 업로드하거나 인터넷 연결을 확인해 주세요."
     )
+
+test_size = st.sidebar.slider(
+    "테스트 데이터 비율", min_value=0.1, max_value=0.8, value=0.2, step=0.05
+)
+st.sidebar.caption("※ 학습:테스트 = 1 - 비율 : 비율 (예: 0.2 → 8:2)")
 
 # ===== 파일 업로드 =====
 uploaded = st.file_uploader("CSV / XLSX / XLS 파일 업로드", type=["csv", "xlsx", "xls"])
@@ -202,9 +212,9 @@ else:
     keep = ~pd.isna(y)
     X, y = X.loc[keep], y.loc[keep]
 
-# ===== 학습/테스트 분할 (테스트 0.8 고정) =====
+# ===== 학습/테스트 분할 =====
 X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.8, random_state=42
+    X, y, test_size=test_size, random_state=42
 )
 
 # ===== 모델 =====
@@ -267,29 +277,51 @@ else:
 
     for i, feat in enumerate(selected_vars):
         try:
-            # 먼저 기본 PDP 계산 (그려지긴 하지만 곧 지울 것임)
+            # 1) PDP를 임시로 계산 (disp 객체만 필요)
             disp = PartialDependenceDisplay.from_estimator(
-                model, X_test, features=[feat], kind="average", ax=axes[i]
+                model, X_test, features=[feat], kind="average"
             )
-            # PDP 선 데이터 추출
-            line = disp.lines_[0][0]
-            x, y = line.get_data()
 
-            # 스무딩 적용
+            # 2) PDP 선 데이터 추출 (버전과 상관없이 첫 Line2D 찾기)
+            line_obj = None
+            for group in disp.lines_:
+                # group이 Line2D 리스트인 경우
+                if isinstance(group, (list, tuple)):
+                    for ln in group:
+                        if hasattr(ln, "get_xdata"):
+                            line_obj = ln
+                            break
+                else:
+                    if hasattr(group, "get_xdata"):
+                        line_obj = group
+                if line_obj is not None:
+                    break
+
+            if line_obj is None:
+                axes[i].set_visible(False)
+                continue
+
+            x = line_obj.get_xdata()
+            y = line_obj.get_ydata()
+
+            # 3) 스무딩 적용
             y_smooth = smooth_1d(y, window=5)
 
-            # 축 비우고 다시 그림
-            axes[i].clear()
-            axes[i].plot(x, y_smooth, "-", linewidth=2)
-            axes[i].scatter(x, y, s=10, color="gray", alpha=0.6)
-            axes[i].set_title(str(feat), fontfamily=plt.rcParams["font.family"])
-            axes[i].set_xlabel(str(feat), fontfamily=plt.rcParams["font.family"])
-            axes[i].set_ylabel("Partial dependence", fontfamily=plt.rcParams["font.family"])
+            # 4) 우리 축에 다시 그리기
+            ax_i = axes[i]
+            ax_i.clear()
+            ax_i.plot(x, y_smooth, "-", linewidth=2)
+            ax_i.scatter(x, y, s=10, color="gray", alpha=0.5)
+            ax_i.set_title(str(feat), fontfamily=plt.rcParams["font.family"])
+            ax_i.set_xlabel(str(feat), fontfamily=plt.rcParams["font.family"])
+            ax_i.set_ylabel(
+                "Partial dependence", fontfamily=plt.rcParams["font.family"]
+            )
 
             for item in (
-                [axes[i].title, axes[i].xaxis.label, axes[i].yaxis.label]
-                + axes[i].get_xticklabels()
-                + axes[i].get_yticklabels()
+                [ax_i.title, ax_i.xaxis.label, ax_i.yaxis.label]
+                + ax_i.get_xticklabels()
+                + ax_i.get_yticklabels()
             ):
                 item.set_fontfamily(plt.rcParams["font.family"])
 
