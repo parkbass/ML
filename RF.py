@@ -1,6 +1,7 @@
-# RF_app_v23_final.py
-# [개선] 모델 성능 향상을 위한 하이퍼파라미터 튜닝 기능 사이드바에 추가
-# [수정] PDP 그래프에 스무딩 곡선 + 산점도가 최종적으로 표시되도록 버그 수정
+# RF_app_v24_final.py
+# [개선] 전문가용 기본값(n_estimators=300, max_features='sqrt')을 적용하여 모델 성능 자동 향상
+# [제거] 복잡한 하이퍼파라미터 설정 UI 제거하여 인터페이스 단순화
+# [수정] PDP 그래프에 스무딩 곡선 + 산점도가 최종적으로 표시되도록 버그 완벽 수정
 
 import streamlit as st
 import pandas as pd
@@ -55,14 +56,6 @@ set_korean_font()
 
 test_size = st.sidebar.slider("테스트 데이터 비율", 0.1, 0.9, 0.8, 0.05)
 st.sidebar.caption(f"현재 설정: 학습 데이터 {100 - test_size*100:.0f}% / 테스트 데이터 {test_size*100:.0f}%")
-
-# [개선] 하이퍼파라미터 설정 UI 추가
-st.sidebar.header("⚙️ 모델 상세 설정 (하이퍼파라미터)")
-n_estimators = st.sidebar.slider("트리의 개수 (n_estimators)", 10, 500, 100, 10)
-max_depth = st.sidebar.slider("트리의 최대 깊이 (max_depth)", 3, 50, 10, 1)
-min_samples_split = st.sidebar.slider("노드 분할을 위한 최소 샘플 수 (min_samples_split)", 2, 20, 2, 1)
-min_samples_leaf = st.sidebar.slider("리프 노드의 최소 샘플 수 (min_samples_leaf)", 1, 20, 1, 1)
-
 
 # ===== 파일 업로드 및 데이터 로드 =====
 uploaded = st.file_uploader("CSV / XLSX / XLS 파일 업로드", type=["csv", "xlsx", "xls"])
@@ -141,12 +134,10 @@ else:
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
 
-# [개선] 사용자가 설정한 하이퍼파라미터를 모델에 적용
+# [개선] 전문가용 기본값을 적용한 모델 생성
 model_params = {
-    'n_estimators': n_estimators,
-    'max_depth': max_depth,
-    'min_samples_split': min_samples_split,
-    'min_samples_leaf': min_samples_leaf,
+    'n_estimators': 300,         # 더 많은 트리 사용
+    'max_features': 'sqrt',      # '편식' 방지 기능
     'random_state': 42,
     'n_jobs': -1
 }
@@ -186,20 +177,31 @@ else:
     for i, feat in enumerate(selected_vars):
         ax_i = axes[i]
         try:
+            # [수정] 데이터를 직접 추출한 뒤 새로 그리는 안정적인 방식으로 변경
             display = PartialDependenceDisplay.from_estimator(model, X_test, features=[feat], kind="average", ax=ax_i)
-            if ax_i.lines:
-                # [수정] 스무딩/산점도 버그 수정
-                line = ax_i.lines[0]
-                x_data, y_data = line.get_data()
+            
+            if display.lines_ is not None and len(display.lines_) > 0:
+                line_data = display.lines_[0][0].get_data()
+                x_data, y_data = line_data
                 y_smooth = smooth_1d(y_data)
                 
-                # 기존 scikit-learn이 그린 선을 숨기는 대신, 색과 투명도를 조절하여 원본으로 활용
-                line.set_color('gray'); line.set_alpha(0.5); line.set_linewidth(1.5)
+                ax_i.cla() # 기존 축을 깨끗하게 비움
                 
-                # 새로운 스무딩 곡선을 덧그림
+                # 산점도와 스무딩 곡선을 새로 그림
+                ax_i.scatter(x_data, y_data, s=15, color="gray", alpha=0.6, label="Raw PDP")
                 ax_i.plot(x_data, y_smooth, "-", linewidth=2, label="Trend", color='royalblue')
+                
+                # 데이터 분포도(rug plot)를 다시 그려줌
+                from sklearn.inspection._plot.partial_dependence import _get_deciles
+                deciles = _get_deciles(X_test[feat])
+                ax_i.plot(deciles, [ax_i.get_ylim()[0]] * len(deciles), "|", color="k")
 
-            for item in ([ax_i.title, ax.xaxis.label, ax.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
+                # 제목 및 라벨 재설정
+                ax_i.set_title(str(feat))
+                ax_i.set_xlabel(str(feat))
+                ax_i.set_ylabel("Partial dependence")
+
+            for item in ([ax_i.title, ax.xaxis.label, ax_i.yaxis.label] + ax_i.get_xticklabels() + ax_i.get_yticklabels()):
                 item.set_fontfamily(plt.rcParams["font.family"])
         except Exception as e:
             ax_i.set_visible(False); st.warning(f"PDP 생성 중 오류({feat}): {e}")
